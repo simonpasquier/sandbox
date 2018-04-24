@@ -42,5 +42,5 @@ func main() {
 	fmt.Printf("\nAll: %dB\n", disk.All)
 	fmt.Printf("Used: %dB\n", disk.Used)
 	fmt.Printf("Avail: %dB\n", disk.Avail)
-	fmt.Printf("(Block size:: %dB\n)", disk.Bs)
+	fmt.Printf("(Block size:: %dB)\n", disk.Bs)
 }
