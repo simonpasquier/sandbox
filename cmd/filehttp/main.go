@@ -23,7 +23,7 @@ func init() {
 func main() {
 	flag.Parse()
 	if help {
-		fmt.Fprintln(os.Stderr, "Simple HTTP server displaying the incoming request")
+		fmt.Fprintln(os.Stderr, "Simple HTTP server rendering a static file")
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
