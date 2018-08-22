@@ -36,14 +36,14 @@ func main() {
 
 	b, err := ioutil.ReadFile(file)
 	if err != nil {
-		log.Fatal("Error reading", file, ":", err)
+		log.Fatal(err)
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, err := w.Write(b)
 
 		if err != nil {
-			log.Println("Failed to write response:", err)
+			log.Println(err)
 		}
 	})
 
