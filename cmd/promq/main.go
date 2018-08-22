@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -27,6 +28,27 @@ func init() {
 	flag.StringVar(&step, "step", "10s", "Step interval (default: 10s)")
 	flag.StringVar(&start, "start", "", "Start time for range query (default: now - <range>)")
 	flag.StringVar(&end, "end", "", "End time for range query (default: now)")
+}
+
+func display(w io.Writer, res model.Value) {
+	switch res.Type() {
+	case model.ValMatrix:
+		matrix := res.(model.Matrix)
+		for _, sset := range matrix {
+			fmt.Fprintf(w, "metric: %s\n", sset.Metric)
+			fmt.Fprintf(w, "samples:\n")
+			for _, sample := range sset.Values {
+				fmt.Fprintf(w, "\t%s\t%s\n", sample.Timestamp.Time(), sample.Value)
+			}
+		}
+	case model.ValVector:
+		vector := res.(model.Vector)
+		for _, sample := range vector {
+			fmt.Fprintf(w, "metric: %s\n", sample.Metric)
+			fmt.Fprintf(w, "samples:\n")
+			fmt.Fprintf(w, "\t%s\t%s\n", sample.Timestamp.Time(), sample.Value)
+		}
+	}
 }
 
 func main() {
@@ -96,8 +118,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", metric, ":", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stdout, "%s@[%s, %s] (step: %s)\n", metric, tstart, tend, dstep)
-	fmt.Fprintln(os.Stdout, res.String())
+	fmt.Fprintf(os.Stdout, "Getting %s between %s and %s with a step of %s\n", metric, tstart, tend, dstep)
+	display(os.Stdout, res)
 
 	q := fmt.Sprintf("%s[%s]", metric, drange)
 	res, err = api.Query(ctx, q, tend)
@@ -105,8 +127,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", q, ":", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stdout, "%s@%s\n", q, tend)
-	fmt.Fprintln(os.Stdout, res.String())
+	fmt.Fprintf(os.Stdout, "Getting %s at instant %s\n", q, tend)
+	display(os.Stdout, res)
 
 	q = fmt.Sprintf("rate(%s[%s])", metric, drange)
 	res, err = api.Query(ctx, q, tend)
@@ -114,6 +136,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", q, ":", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stdout, "%s@%s\n", q, tend)
-	fmt.Fprintln(os.Stdout, res.String())
+	fmt.Fprintf(os.Stdout, "Getting %s at instant %s\n", q, tend)
+	display(os.Stdout, res)
+
+	res, err = api.QueryRange(ctx, q, v1.Range{Start: tstart, End: tend, Step: dstep})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error querying Prometheus", metric, ":", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stdout, "Getting %s between %s and %s with a step of %s\n", q, tstart, tend, dstep)
+	display(os.Stdout, res)
 }
