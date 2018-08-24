@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,6 +13,15 @@ import (
 	"github.com/jszwedko/go-circleci"
 	"golang.org/x/oauth2"
 )
+
+var help bool
+var ghtPath, cctPath string
+
+func init() {
+	flag.BoolVar(&help, "help", false, "Show help")
+	flag.StringVar(&ghtPath, "token.github", "", "Path to your GitHub token")
+	flag.StringVar(&cctPath, "token.circleci", "", "Path to your Circle CI token")
+}
 
 func checkMark(s string, ok bool) {
 	check := "✗"
@@ -36,8 +46,18 @@ func readTokenFile(name string) string {
 }
 
 func main() {
-	ght := readTokenFile("/home/simon/.github_token")
-	cct := readTokenFile("/home/simon/.circleci_token")
+	flag.Parse()
+	if help {
+		fmt.Fprintln(os.Stderr, "Display a summary of GitHub integrations for all Prometheus projects.")
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
+	if ghtPath == "" || cctPath == "" {
+		log.Fatal("token.github and token.circleci parameters are mandataory")
+	}
+
+	ght := readTokenFile(ghtPath)
+	cct := readTokenFile(cctPath)
 
 	ctx := context.Background()
 	ts := oauth2.StaticTokenSource(
