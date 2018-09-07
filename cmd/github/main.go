@@ -68,10 +68,22 @@ func main() {
 	ghc := github.NewClient(tc)
 	ccc := circleci.Client{Token: cct}
 
-	repos, _, err := ghc.Repositories.ListByOrg(ctx, "prometheus", nil)
-	if err != nil {
-		log.Fatal("Fail to list GitHub repositories:", err)
+	var repos = make([]*github.Repository, 0)
+	opt := &github.RepositoryListByOrgOptions{
+		ListOptions: github.ListOptions{PerPage: 10},
 	}
+	for {
+		r, resp, err := ghc.Repositories.ListByOrg(ctx, "prometheus", opt)
+		if err != nil {
+			log.Fatal("Fail to list GitHub repositories:", err)
+		}
+		repos = append(repos, r...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	fmt.Printf("✔ Found %d repositories in GitHub\n\n", len(repos))
 
 	ccp, err := ccc.ListProjects()
 	if err != nil {
