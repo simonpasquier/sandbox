@@ -1,6 +1,8 @@
 #!/bin/bash
 
 set -e
+set -o pipefail
+set -u
 
 if [ -z "$GITHUB_OWNER" ]; then
     echo "GITHUB_OWNER not set"

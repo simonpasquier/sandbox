@@ -136,66 +136,23 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for pr := range prCh {
-				status, err := pr.currentStatus()
-				if err != nil {
-					fmt.Printf("✗ %s: %s\n", pr, err)
-					continue
-				}
-
-				switch {
-				case status == upstreamStatus:
-					fmt.Printf("✔ %s: already opened upstream\n", pr)
-
-				case status == notMergeableStatus || (recreateMissing && status == missingCheckStatus):
-					err = pr.recreate()
+				s := pr.getState()
+				for {
+					next, err := process(pr, s)
 					if err != nil {
-						fmt.Printf("✗ %s: %s\n", pr, err)
+						fmt.Printf("✗ %s: failed processing %q state: %s\n", pr, s, err)
 						break
-					} else {
-						err = pr.addLabel(rebaseLabel)
+					}
+
+					if s == next {
+						err := pr.setState(next)
 						if err != nil {
-							fmt.Printf("✗ %s: %s\n", pr, err)
-							break
+							fmt.Printf("✗ %s: failed setting state to %q: %s\n", pr, s, err)
 						}
-					}
-					fmt.Printf("✔ %s: pending recreate operation\n", pr)
-
-				case status == mergeableStatus:
-					err = pr.removeLabel(rebaseLabel)
-					if err != nil {
-						fmt.Printf("✗ %s: %s\n", pr, err)
+						fmt.Printf("✔ %s: new state %q\n", pr, s)
 						break
 					}
-					fmt.Printf("✔ %s: %q label removed\n", pr, rebaseLabel)
-
-				case status == missingCheckStatus:
-					fmt.Printf("✗ %s: missing checks\n", pr)
-
-				case status == failedCheckStatus:
-					// TODO: add a label to run script only once.
-					err := pr.runScript()
-					if err != nil {
-						fmt.Printf("✗ %s: %s\n", pr, err)
-						break
-					}
-					fmt.Printf("✔ %s: update script executed\n", pr)
-
-				case status == pendingCheckStatus:
-					fmt.Printf("✔ %s: pending checks\n", pr)
-
-				case status == okCheckStatus:
-					err := pr.sendUpstream()
-					if err != nil {
-						fmt.Printf("✗ %s: %s\n", pr, err)
-						break
-					} else {
-						err = pr.addLabel(upstreamLabel)
-						if err != nil {
-							fmt.Printf("✗ %s: %s\n", pr, err)
-							break
-						}
-					}
-					fmt.Printf("✔ %s: checks ok\n", pr)
+					s = next
 				}
 			}
 		}()
@@ -215,14 +172,14 @@ func main() {
 				for _, l := range pr.Labels {
 					if l.GetName() == dependabotLabel {
 						n++
-						pr := &dependabotPullRequest{
-							ctx:          ctx,
-							c:            ghc,
-							pr:           pr,
-							upstream:     ghUpstreamOrg,
-							updateScript: updateScript,
-							dryrun:       dryrun,
-						}
+						pr := newDependabotPullRequest(
+							ctx,
+							ghc,
+							pr,
+							ghUpstreamOrg,
+							updateScript,
+							dryrun,
+						)
 						prCh <- pr
 						break
 					}
@@ -239,27 +196,39 @@ func main() {
 	wg.Wait()
 }
 
-type prStatus string
-
-const (
-	unknownStatus      = prStatus("unknown")              // check the error
-	missingCheckStatus = prStatus("missing checks")       // recreate (maybe?)
-	pendingCheckStatus = prStatus("waiting for checks")   // nothing, retry later
-	failedCheckStatus  = prStatus("failed checks")        // should run update
-	okCheckStatus      = prStatus("checks ok")            // should open PR upstream
-	notMergeableStatus = prStatus("not mergeable")        // should recreate
-	mergeableStatus    = prStatus("mergeable")            // should remove label
-	upstreamStatus     = prStatus("waiting for upstream") // nothing to do
-)
-
 type dependabotPullRequest struct {
-	ctx context.Context
-	c   *github.Client
-	pr  *github.PullRequest
+	ctx    context.Context
+	c      *github.Client
+	pr     *github.PullRequest
+	labels []string
 	// The name of the upstream repository.
 	upstream     string
 	updateScript string
+	updatedOnce  bool
 	dryrun       bool
+}
+
+func newDependabotPullRequest(
+	ctx context.Context,
+	c *github.Client,
+	pr *github.PullRequest,
+	upstream string,
+	updateScript string,
+	dryrun bool,
+) *dependabotPullRequest {
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		labels = append(labels, l.GetName())
+	}
+	return &dependabotPullRequest{
+		ctx:          ctx,
+		c:            c,
+		pr:           pr,
+		labels:       labels,
+		upstream:     upstream,
+		updateScript: updateScript,
+		dryrun:       dryrun,
+	}
 }
 
 func (d *dependabotPullRequest) userName() string {
@@ -278,35 +247,43 @@ func (d *dependabotPullRequest) sha() string {
 	return d.pr.Head.GetSHA()
 }
 
-func (d *dependabotPullRequest) getUpstreamPR() (string, error) {
+// getUpstreamPR returns the URL string of the upstream pull request and a
+// boolean flag indicating whether or not the request is open.
+func (d *dependabotPullRequest) getUpstreamPR() (string, bool, error) {
+	var open bool
+	// Search closed requests first.
 	opt := github.PullRequestListOptions{Head: d.pr.Head.GetLabel(), State: "closed"}
 	prs, _, err := d.c.PullRequests.List(d.ctx, d.upstream, d.repoName(), &opt)
 	if err != nil {
-		return "", err
+		return "", open, err
 	}
 	for _, pr := range prs {
 		merged, _, err := d.c.PullRequests.IsMerged(d.ctx, d.upstream, d.repoName(), pr.GetNumber())
 		if err != nil {
-			return "", err
+			return "", open, err
 		}
 		if merged {
-			return pr.GetURL(), nil
+			return pr.GetURL(), open, nil
 		}
 	}
 
+	// Search open requests.
+	open = true
 	opt.State = "open"
 	prs, _, err = d.c.PullRequests.List(d.ctx, d.upstream, d.repoName(), &opt)
 	if err != nil {
-		return "", err
+		return "", open, err
 	}
 	if len(prs) == 1 {
-		return prs[0].GetURL(), nil
+		return prs[0].GetURL(), open, nil
 	}
-	return "", nil
+	return "", open, nil
 }
 
+// isMergeable returns true iff the pull request can be merged (eg no conflicts).
 func (d *dependabotPullRequest) isMergeable() (bool, error) {
 	var i = 0
+	// TODO: make it more generic.
 	for d.pr.Mergeable == nil && i < 3 {
 		time.Sleep(1 * time.Second)
 		pr, _, err := d.c.PullRequests.Get(d.ctx, d.userName(), d.repoName(), d.pr.GetNumber())
@@ -323,19 +300,155 @@ func (d *dependabotPullRequest) isMergeable() (bool, error) {
 }
 
 const (
-	rebaseLabel   = "needs rebase"
-	upstreamLabel = "upstream pr"
+	statePrefixLabel = "state/"
+
+	unknownState = "unknown"
+
+	needUpdateState   = "need update"
+	okUpdateState     = "update ok"
+	failedUpdateState = "update failed"
+
+	needRebaseState    = "need rebase"
+	pendingRebaseState = "pending rebase"
+	okRebaseState      = "rebase ok"
+
+	missingChecksState = "checks missing"
+	failedChecksState  = "checks failed"
+	pendingChecksState = "checks pending"
+	okChecksState      = "checks ok"
+
+	submittedUpstreamState = "upstream submitted"
 )
 
-var recreateCommand = "@dependabot recreate"
+func process(d *dependabotPullRequest, state string) (string, error) {
+	checkStatusToState := func() (string, error) {
+		s, err := d.checkStatus()
+		if err != nil {
+			return "", err
+		}
+		switch s {
+		case "":
+			return missingChecksState, nil
+		case "failure":
+			return failedChecksState, nil
+		case "pending":
+			return pendingChecksState, nil
+		case "success":
+			return okChecksState, nil
+		}
+		return "", errors.Errorf("unknown check status: %s", s)
+	}
 
+	switch state {
+	case unknownState:
+		return pendingRebaseState, nil
+
+	case needUpdateState:
+		err := d.runScript()
+		if err != nil {
+			return failedUpdateState, nil
+		}
+		return okUpdateState, nil
+	case okUpdateState:
+		return checkStatusToState()
+
+	case needRebaseState:
+		err := d.recreate()
+		if err != nil {
+			return "", err
+		}
+		return pendingRebaseState, nil
+	case pendingRebaseState:
+		ok, err := d.isMergeable()
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return okRebaseState, nil
+		}
+	case okRebaseState:
+		return checkStatusToState()
+
+	case missingChecksState:
+		if recreateMissing {
+			return needRebaseState, nil
+		}
+	case failedChecksState:
+		if !d.updatedOnce {
+			return needUpdateState, nil
+		}
+	case pendingChecksState:
+		return checkStatusToState()
+	case okChecksState:
+		err := d.sendUpstream()
+		if err != nil {
+			return "", err
+		}
+		return submittedUpstreamState, nil
+		//TODO: check upstream for conflicts.
+	}
+
+	// No state change.
+	return state, nil
+}
+
+// getState returns the state of the pull request.
+func (d *dependabotPullRequest) getState() string {
+	for _, l := range d.getLabels() {
+		s := strings.TrimPrefix(l, statePrefixLabel)
+		if s != l {
+			return s
+		}
+	}
+	return unknownState
+}
+
+// setState records the state of the pull request.
+func (d *dependabotPullRequest) setState(s string) error {
+	var found bool
+	s = statePrefixLabel + s
+	labels := d.getLabels()
+	for i := range labels {
+		found = strings.HasPrefix(labels[i], statePrefixLabel)
+		if !found {
+			continue
+		}
+		if labels[i] == s {
+			return nil
+		}
+		labels[i] = s
+		break
+	}
+	if !found {
+		labels = append(labels, s)
+	}
+	return d.updateLabels(labels)
+}
+
+func (d *dependabotPullRequest) getLabels() []string {
+	return d.labels
+}
+
+func (d *dependabotPullRequest) updateLabels(labels []string) error {
+	var err error
+	update := &github.IssueRequest{
+		Labels: &labels,
+	}
+	if !d.dryrun {
+		_, _, err = d.c.Issues.Edit(d.ctx, d.userName(), d.repoName(), d.pr.GetNumber(), update)
+	}
+	if err == nil {
+		d.labels = labels
+	}
+	return err
+}
+
+// recreate asks dependabot to recreate the pull request.
 func (d *dependabotPullRequest) recreate() error {
 	if d.dryrun {
 		return nil
 	}
-	if d.isLabelPresent(rebaseLabel) {
-		return nil
-	}
+	recreateCommand := "@dependabot recreate"
 	comment := github.IssueComment{
 		Body: &recreateCommand,
 	}
@@ -343,60 +456,7 @@ func (d *dependabotPullRequest) recreate() error {
 	return err
 }
 
-func (d *dependabotPullRequest) addLabel(label string) error {
-	if d.dryrun {
-		return nil
-	}
-	labels := make([]string, 0, len(d.pr.Labels))
-	for _, l := range d.pr.Labels {
-		if l.GetName() == label {
-			return nil
-		}
-		labels = append(labels, l.GetName())
-	}
-	labels = append(labels, label)
-	update := &github.IssueRequest{
-		Labels: &labels,
-	}
-	_, _, err := d.c.Issues.Edit(d.ctx, d.userName(), d.repoName(), d.pr.GetNumber(), update)
-	return err
-}
-
-func (d *dependabotPullRequest) removeLabel(label string) error {
-	if d.dryrun {
-		return nil
-	}
-	if len(d.pr.Labels) == 0 {
-		// No label.
-		return nil
-	}
-	labels := make([]string, 0, len(d.pr.Labels)-1)
-	for _, l := range d.pr.Labels {
-		if l.GetName() == label {
-			continue
-		}
-		labels = append(labels, l.GetName())
-	}
-	if len(labels) == len(d.pr.Labels) {
-		// Label not found.
-		return nil
-	}
-	update := &github.IssueRequest{
-		Labels: &labels,
-	}
-	_, _, err := d.c.Issues.Edit(d.ctx, d.userName(), d.repoName(), d.pr.GetNumber(), update)
-	return err
-}
-
-func (d *dependabotPullRequest) isLabelPresent(label string) bool {
-	for _, l := range d.pr.Labels {
-		if l.GetName() == label {
-			return true
-		}
-	}
-	return false
-}
-
+// checkStatus returns the CI status of the pull request (failure, pending, success or empty string).
 func (d *dependabotPullRequest) checkStatus() (string, error) {
 	status, _, err := d.c.Repositories.GetCombinedStatus(d.ctx, d.userName(), d.repoName(), d.sha(), nil)
 	if err != nil {
@@ -408,7 +468,13 @@ func (d *dependabotPullRequest) checkStatus() (string, error) {
 	return status.GetState(), nil
 }
 
+// runScript runs the configured script on the pull request.
+// It shouldn't be called more than once.
 func (d *dependabotPullRequest) runScript() error {
+	if d.updatedOnce {
+		return errors.New("script already executed once")
+	}
+	d.updatedOnce = true
 	if d.dryrun || d.updateScript == "" {
 		return nil
 	}
@@ -431,47 +497,17 @@ func (d *dependabotPullRequest) runScript() error {
 	return err
 }
 
+// sendUpstream opens the pull request to the upstream repository.
 func (d *dependabotPullRequest) sendUpstream() error {
 	if d.dryrun {
 		return nil
 	}
+	if _, ok, err := d.getUpstreamPR(); err != nil {
+		return err
+	} else if ok {
+		return nil
+	}
 	return nil
-}
-
-func (d *dependabotPullRequest) currentStatus() (prStatus, error) {
-	// Check whether the PR is already opened in the upstream repository.
-	if exists, err := d.getUpstreamPR(); err != nil {
-		return unknownStatus, err
-	} else if exists != "" {
-		return upstreamStatus, nil
-	}
-
-	// Check whether the PR has conflicts.
-	ok, err := d.isMergeable()
-	if err != nil {
-		return unknownStatus, err
-	}
-	if !ok {
-		return notMergeableStatus, nil
-	}
-	if d.isLabelPresent(rebaseLabel) {
-		return mergeableStatus, nil
-	}
-
-	// Check whether the CI status is ok.
-	checkStatus, err := d.checkStatus()
-	if err != nil {
-		return unknownStatus, err
-	}
-	switch checkStatus {
-	case "failure":
-		return failedCheckStatus, nil
-	case "pending":
-		return pendingCheckStatus, nil
-	case "success":
-		return okCheckStatus, nil
-	}
-	return missingCheckStatus, nil
 }
 
 func (d *dependabotPullRequest) String() string {
