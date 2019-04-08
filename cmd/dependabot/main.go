@@ -34,6 +34,7 @@ const (
 )
 
 func init() {
+	//TODO: replace with kingpin
 	flag.BoolVar(&help, "help", false, "Show help")
 	flag.BoolVar(&dryrun, "dry-run", false, "Dry-run mode")
 	flag.BoolVar(&recreateMissing, "recreate-missing-checks", false, "Recreate the pull request when checks are missing")
@@ -244,7 +245,8 @@ func (d *dependabotPullRequest) branchName() string {
 }
 
 func (d *dependabotPullRequest) sha() string {
-	return d.pr.Head.GetSHA()
+	return d.pr.Head.GetRef()
+	//return d.pr.Head.GetSHA()
 }
 
 // getUpstreamPR returns the URL string of the upstream pull request and a
@@ -458,6 +460,7 @@ func (d *dependabotPullRequest) recreate() error {
 
 // checkStatus returns the CI status of the pull request (failure, pending, success or empty string).
 func (d *dependabotPullRequest) checkStatus() (string, error) {
+	fmt.Println("check", d.sha())
 	status, _, err := d.c.Repositories.GetCombinedStatus(d.ctx, d.userName(), d.repoName(), d.sha(), nil)
 	if err != nil {
 		return "", err
