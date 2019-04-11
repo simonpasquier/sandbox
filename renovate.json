@@ -2,7 +2,9 @@
   "extends": [
     "config:base"
   ],
-  "gomodTidy": true,
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "ignoreDeps": [],
   "labels": [
     "dependencies"
