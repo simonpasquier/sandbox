@@ -4,7 +4,7 @@ go 1.12
 
 require (
 	github.com/google/go-github v17.0.0+incompatible
-	github.com/google/go-github/v24 v24.0.1
+	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.8.5 // indirect
 	github.com/jszwedko/go-circleci v0.2.0
 	github.com/oklog/ulid v1.3.1
