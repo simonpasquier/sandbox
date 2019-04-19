@@ -14,4 +14,5 @@ require (
 	github.com/prometheus/prometheus v2.8.1+incompatible
 	golang.org/x/oauth2 v0.0.0-20190319182350-c85d3e98c914
 	google.golang.org/grpc v1.20.0
+	gopkg.in/yaml.v2 v2.2.1
 )
