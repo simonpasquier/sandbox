@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/pkg/errors"
@@ -13,14 +14,15 @@ import (
 )
 
 var (
-	help      bool
-	version   string
-	versionRe *regexp.Regexp
+	help          bool
+	version, path string
+	versionRe     *regexp.Regexp
 )
 
 func init() {
 	flag.BoolVar(&help, "help", false, "Help message")
 	flag.StringVar(&version, "version", "", "Go version")
+	flag.StringVar(&path, "path", ".", "Repository path")
 
 	versionRe = regexp.MustCompile(`^(\d)\.(\d+)$`)
 }
@@ -32,7 +34,11 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
-	errs := run()
+	if len(version) == 0 {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+	errs := run(version, path)
 	if len(errs) > 0 {
 		for _, err := range errs {
 			fmt.Println("✗ got error:", err)
@@ -70,6 +76,12 @@ func processFile(filename string, process func(string) (string, error)) error {
 	return ioutil.WriteFile(filename, []byte(out), mod)
 }
 
+const promuVersion = `go:
+    # Whenever the Go version is updated here, .travis.yml and
+    # .circle/config.yml should also be updated.
+    version: %s
+`
+
 func processPromu(s string) (string, error) {
 	type promuConfig struct {
 		Go map[string]string `yaml:"go"`
@@ -81,7 +93,7 @@ func processPromu(s string) (string, error) {
 	}
 
 	if _, ok := cfg.Go["version"]; !ok {
-		return "", errors.New("couldn't find go version in .promu.yml")
+		return fmt.Sprintf(promuVersion, version) + s, nil
 	}
 
 	promuRe := regexp.MustCompile(`(?m:^(\s*version:\s*)(\d\.\d+)$)`)
@@ -114,7 +126,7 @@ func processTravis(s string) (string, error) {
 	return travisRe.ReplaceAllString(s, "${1}"+version+"${2}"), nil
 }
 
-func run() []error {
+func run(version string, path string) []error {
 	m := versionRe.FindSubmatch([]byte(version))
 	if len(m) == 0 {
 		return []error{errors.Errorf("Invalid version %q, expecting x.y", version)}
@@ -128,13 +140,13 @@ func run() []error {
 	}
 
 	errf(func() error {
-		return processFile(".promu.yml", processPromu)
+		return processFile(filepath.Join(path, ".promu.yml"), processPromu)
 	})
 	errf(func() error {
-		return processFile(".circleci/config.yml", processCircle)
+		return processFile(filepath.Join(path, ".circleci/config.yml"), processCircle)
 	})
 	errf(func() error {
-		return processFile(".travis.yml", processTravis)
+		return processFile(filepath.Join(path, ".travis.yml"), processTravis)
 	})
 
 	return errs
