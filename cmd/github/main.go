@@ -11,16 +11,21 @@ import (
 
 	"github.com/google/go-github/github"
 	"github.com/jszwedko/go-circleci"
+	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
 )
 
-var help bool
-var ghtPath, cctPath string
+var (
+	help             bool
+	ghtPath, cctPath string
+	org              string
+)
 
 func init() {
 	flag.BoolVar(&help, "help", false, "Show help")
-	flag.StringVar(&ghtPath, "token.github", "", "Path to your GitHub token")
-	flag.StringVar(&cctPath, "token.circleci", "", "Path to your Circle CI token")
+	flag.StringVar(&cctPath, "circleci.token", "", "Path to your Circle CI token")
+	flag.StringVar(&ghtPath, "github.token", "", "Path to your GitHub token")
+	flag.StringVar(&org, "github.organization", "prometheus", "Name of the GitHub organization")
 }
 
 func checkMark(s string, ok bool) {
@@ -32,50 +37,69 @@ func checkMark(s string, ok bool) {
 
 }
 
-func readTokenFile(name string) string {
+func readTokenFile(name string) (string, error) {
 	f, err := os.Open(name)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	token, err := ioutil.ReadAll(f)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 
-	return strings.Trim(string(token), "\n")
+	return strings.Trim(string(token), "\n"), nil
 }
 
 func main() {
 	flag.Parse()
 	if help {
-		fmt.Fprintln(os.Stderr, "Display a summary of GitHub integrations for all Prometheus projects.")
+		fmt.Fprintln(os.Stderr, "Show a summary of settings for your GitHub organization's projects.")
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
-	if ghtPath == "" || cctPath == "" {
-		log.Fatal("token.github and token.circleci parameters are mandataory")
+	if ghtPath == "" {
+		log.Fatal("github.token parameters is mandataory")
 	}
+	if cctPath == "" {
+		log.Println("WARN: circleci.token parameter is missing")
+	}
+	if err := run(org, ghtPath, cctPath); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	ght := readTokenFile(ghtPath)
-	cct := readTokenFile(cctPath)
-
+func run(org string, ghToken string, ccToken string) error {
+	ght, err := readTokenFile(ghToken)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: ght},
+	ghc := github.NewClient(
+		oauth2.NewClient(
+			ctx,
+			oauth2.StaticTokenSource(
+				&oauth2.Token{AccessToken: ght},
+			),
+		),
 	)
-	tc := oauth2.NewClient(ctx, ts)
 
-	ghc := github.NewClient(tc)
-	ccc := circleci.Client{Token: cct}
+	var ccc *circleci.Client
+	if ccToken != "" {
+		cct, err := readTokenFile(ccToken)
+		if err != nil {
+			return err
+		}
+		ccc = &circleci.Client{Token: cct}
+	}
 
 	var repos = make([]*github.Repository, 0)
 	opt := &github.RepositoryListByOrgOptions{
 		ListOptions: github.ListOptions{PerPage: 10},
 	}
 	for {
-		r, resp, err := ghc.Repositories.ListByOrg(ctx, "prometheus", opt)
+		r, resp, err := ghc.Repositories.ListByOrg(ctx, org, opt)
 		if err != nil {
-			log.Fatal("Fail to list GitHub repositories:", err)
+			return errors.Wrap(err, "Fail to list GitHub repositories")
 		}
 		repos = append(repos, r...)
 		if resp.NextPage == 0 {
@@ -85,29 +109,35 @@ func main() {
 	}
 	fmt.Printf("✔ Found %d repositories in GitHub\n\n", len(repos))
 
-	ccp, err := ccc.ListProjects()
-	if err != nil {
-		log.Fatal("Fail to list CircleCI projects:", err)
-	}
-	cc := make(map[string]circleci.FeatureFlags, len(repos))
-	for _, p := range ccp {
-		if "prometheus" == p.Username {
-			cc[p.Reponame] = p.FeatureFlags
+	cc := make(map[string]circleci.FeatureFlags)
+	if ccc != nil {
+		ccp, err := ccc.ListProjects()
+		if err != nil {
+			return errors.Wrap(err, "fail to list CircleCI projects")
+		}
+		for _, p := range ccp {
+			if "prometheus" == p.Username {
+				cc[p.Reponame] = p.FeatureFlags
+			}
 		}
 	}
 
 	for _, r := range repos {
-		fmt.Println(r.GetName())
+		fmt.Println("Repository:", r.GetName())
 
 		fmt.Println()
 		hooks, _, err := ghc.Repositories.ListHooks(ctx, "prometheus", r.GetName(), nil)
 		if err != nil {
-			log.Fatal("Fail to list hooks:", err)
+			return errors.Wrap(err, "fail to list hooks")
 		}
 
-		fmt.Println("GitHub integrations")
+		//TODO: list branch settings.
+		//TODO: list deploy keys.
+		//TODO: list security alerts.
+
+		fmt.Println("External integrations:")
 		for _, h := range hooks {
-			fmt.Println("ID:", h.GetID())
+			fmt.Println("• ID:", h.GetID())
 			var (
 				name    string
 				isValid bool
@@ -127,22 +157,27 @@ func main() {
 				}
 			} else {
 				name = h.GetName() + " (GitHub service)"
+				isValid = true
 			}
 			checkMark(name, isValid)
 			checkMark("active", h.GetActive())
-			checkMark("events:"+strings.Join(h.Events, ","), true)
+			checkMark(fmt.Sprintf("events: %s", strings.Join(h.Events, ",")), true)
+		}
+		//TODO: list installed apps.
+
+		if len(cc) > 0 {
+			fmt.Println()
+			fmt.Println("CircleCI")
+			ccFlags, ok := cc[r.GetName()]
+			if !ok {
+				checkMark("Project not found in CircleCI", false)
+			} else {
+				checkMark("Build fork PRs", ccFlags.BuildForkPRs)
+				checkMark("OSS", ccFlags.OSS)
+			}
 		}
 
 		fmt.Println()
-		fmt.Println("CircleCI")
-		ccFlags, ok := cc[r.GetName()]
-		if !ok {
-			checkMark("Project not found in CircleCI", false)
-		} else {
-			checkMark("Build fork PRs", ccFlags.BuildForkPRs)
-			checkMark("OSS", ccFlags.OSS)
-		}
-
-		fmt.Println("----")
 	}
+	return nil
 }
