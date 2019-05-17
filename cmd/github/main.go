@@ -61,12 +61,19 @@ type key struct {
 	ReadOnly bool
 }
 
+type protectedBranch struct {
+	Name           string
+	RequiredChecks bool
+	Checks         []string
+}
+
 type repository struct {
-	Name         string
-	Integrations []integration
-	Keys         []key
-	Circle       circleSettings
-	Travis       travisSettings
+	Name              string
+	ProtectedBranches []protectedBranch
+	Integrations      []integration
+	Keys              []key
+	Circle            circleSettings
+	Travis            travisSettings
 }
 
 const repoTmpl = `Repository: {{ .Name }}
@@ -75,10 +82,16 @@ Integrations:{{ range .Integrations }}
 - ID: {{ .ID }}
   Active: {{ if .Active }}yes{{ else }}no{{ end }}
   URL: {{ .URL }}
-  Events: {{ join .Events "," }}
+  Events: {{ join .Events ", " }}
   Created at: {{ .CreatedAt }}
   Updated at: {{ .UpdatedAt }}
 {{- end }}
+
+Protected branches:{{ range .ProtectedBranches }}
+- Name: {{ .Name }}
+  Mode: {{ if .RequiredChecks }}strict mode{{ else }}relax mode{{ end }}
+  Checks: {{ join .Checks ", " }}
+{{- else }} none{{- end }}
 
 Keys:{{ range .Keys }}
 - {{ .Name }} ({{ if .ReadOnly }}read-only{{ else }}read-write{{ end }})
@@ -87,24 +100,39 @@ Keys:{{ range .Keys }}
 CircleCI:{{ if .Circle.Enabled }}
 - OSS: {{ .Circle.Flags.OSS }}
   Build fork PRs: {{ .Circle.Flags.BuildForkPRs }}
-{{ else }} not enabled{{ end }}
+{{ else }} not enabled{{- end }}
 
 TravisCI:{{ if .Travis.Enabled }}
--
-{{ else }} not enabled{{ end }}`
+- xxx
+{{ else }} not enabled{{- end }}
+`
 
 func (r *repository) String() string {
 	t := template.New("repository").Funcs(template.FuncMap{"join": strings.Join})
 	t, err := t.Parse(repoTmpl)
 	if err != nil {
-		return err.Error()
+		panic(err)
 	}
 	b := bytes.Buffer{}
 	err = t.Execute(&b, r)
 	if err != nil {
-		return err.Error()
+		panic(err)
 	}
 	return b.String()
+}
+
+func readAll(list func(*github.ListOptions) (*github.Response, error)) error {
+	opt := github.ListOptions{PerPage: 10}
+	for {
+		resp, err := list(&opt)
+		if err != nil {
+			return err
+		}
+		if resp.NextPage == 0 {
+			return nil
+		}
+		opt.Page = resp.NextPage
+	}
 }
 
 func checkMark(s string, ok bool) {
@@ -176,29 +204,25 @@ func run(org string, ghToken string, ccToken string) ([]repository, error) {
 	}
 
 	var ghRepos = make([]*github.Repository, 0)
-	opt := &github.RepositoryListByOrgOptions{
-		ListOptions: github.ListOptions{PerPage: 10},
-	}
-	for {
-		r, resp, err := ghc.Repositories.ListByOrg(ctx, org, opt)
-		if err != nil {
-			return nil, errors.Wrap(err, "Fail to list GitHub repositories")
-		}
-		if repoNames != "" {
-			for _, r := range r {
-				re := regexp.MustCompile("(?:^|,)" + r.GetName() + "(,|$)")
-				if re.MatchString(repoNames) {
-					ghRepos = append(ghRepos, r)
-				}
+	err = readAll(
+		func(opts *github.ListOptions) (*github.Response, error) {
+			repos, resp, err := ghc.Repositories.ListByOrg(ctx, org, &github.RepositoryListByOrgOptions{ListOptions: *opts})
+			if err != nil {
+				return nil, errors.Wrap(err, "Fail to list GitHub repositories")
 			}
-		} else {
-			ghRepos = append(ghRepos, r...)
-		}
-		if resp.NextPage == 0 {
-			break
-		}
-		opt.Page = resp.NextPage
-	}
+			if repoNames != "" {
+				for _, r := range repos {
+					re := regexp.MustCompile("(?:^|,)" + r.GetName() + "(?:,|$)")
+					if re.MatchString(repoNames) {
+						ghRepos = append(ghRepos, r)
+					}
+				}
+			} else {
+				ghRepos = append(ghRepos, repos...)
+			}
+			return resp, err
+		},
+	)
 
 	cc := make(map[string]circleci.FeatureFlags)
 	if ccc != nil {
@@ -217,39 +241,80 @@ func run(org string, ghToken string, ccToken string) ([]repository, error) {
 	for _, r := range ghRepos {
 		repo := repository{Name: r.GetName()}
 
-		hooks, _, err := ghc.Repositories.ListHooks(ctx, org, r.GetName(), nil)
-		if err != nil {
-			return nil, errors.Wrap(err, fmt.Sprintf("%s: fail to list hooks", r.GetName()))
-		}
-		repo.Integrations = make([]integration, 0, len(hooks))
-		for _, h := range hooks {
-			var u string
-			if _, ok := h.Config["url"]; ok {
-				u, _ = h.Config["url"].(string)
-			}
-			repo.Integrations = append(repo.Integrations, integration{
-				ID:        strconv.FormatInt(h.GetID(), 10),
-				Active:    h.GetActive(),
-				Events:    h.Events,
-				CreatedAt: h.GetCreatedAt(),
-				UpdatedAt: h.GetUpdatedAt(),
-				URL:       u,
-			})
-		}
+		err = readAll(
+			func(opts *github.ListOptions) (*github.Response, error) {
 
-		//TODO: list branch settings.
-		branches, _, err := ghc.Repositories.ListBranches(ctx, org, r.GetName(), nil)
+				hooks, resp, err := ghc.Repositories.ListHooks(ctx, org, r.GetName(), opts)
+				if err != nil {
+					return nil, errors.Wrap(err, fmt.Sprintf("%s: fail to list hooks", r.GetName()))
+				}
+				for _, h := range hooks {
+					var u string
+					if _, ok := h.Config["url"]; ok {
+						u, _ = h.Config["url"].(string)
+					}
+					repo.Integrations = append(repo.Integrations, integration{
+						ID:        strconv.FormatInt(h.GetID(), 10),
+						Active:    h.GetActive(),
+						Events:    h.Events,
+						CreatedAt: h.GetCreatedAt(),
+						UpdatedAt: h.GetUpdatedAt(),
+						URL:       u,
+					})
+				}
+				return resp, err
+			},
+		)
+
+		err = readAll(
+			func(opts *github.ListOptions) (*github.Response, error) {
+				branches, resp, err := ghc.Repositories.ListBranches(ctx, org, r.GetName(), opts)
+				if err != nil {
+					return nil, errors.Wrap(err, fmt.Sprintf("%s: fail to list branches", r.GetName()))
+				}
+				for _, b := range branches {
+					if !b.GetProtected() {
+						continue
+					}
+					p, _, err := ghc.Repositories.GetBranchProtection(ctx, org, r.GetName(), b.GetName())
+					if err != nil {
+						return nil, errors.Wrap(err, fmt.Sprintf("%s/%s: fail to get branch protection", r.GetName(), b.GetName()))
+					}
+					var (
+						strict bool
+						checks []string
+					)
+					if p.GetRequiredStatusChecks() != nil {
+						strict = p.GetRequiredStatusChecks().Strict
+						checks = p.GetRequiredStatusChecks().Contexts
+					}
+					repo.ProtectedBranches = append(repo.ProtectedBranches, protectedBranch{
+						Name:           b.GetName(),
+						RequiredChecks: strict,
+						Checks:         checks,
+					})
+				}
+				return resp, err
+			},
+		)
 
 		//TODO: list security alerts.
 		//TODO: list installed apps.
-		keys, _, err := ghc.Repositories.ListKeys(ctx, org, r.GetName(), nil)
-		repo.Keys = make([]key, 0, len(keys))
-		for _, k := range keys {
-			repo.Keys = append(repo.Keys, key{
-				Name:     k.GetTitle(),
-				ReadOnly: k.GetReadOnly(),
-			})
-		}
+		err = readAll(
+			func(opts *github.ListOptions) (*github.Response, error) {
+				keys, resp, err := ghc.Repositories.ListKeys(ctx, org, r.GetName(), opts)
+				if err != nil {
+					return nil, errors.Wrap(err, fmt.Sprintf("%s: fail to list keys", r.GetName()))
+				}
+				for _, k := range keys {
+					repo.Keys = append(repo.Keys, key{
+						Name:     k.GetTitle(),
+						ReadOnly: k.GetReadOnly(),
+					})
+				}
+				return resp, err
+			},
+		)
 
 		if len(cc) > 0 {
 			ccFlags, ok := cc[r.GetName()]
