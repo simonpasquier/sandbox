@@ -180,9 +180,9 @@ func run(org string, repoName string, lastTag string, rc bool, ghToken string) e
 	if err != nil {
 		return errors.Wrap(err, fmt.Sprintf("%s is not a valid tag", lastTag))
 	}
-	nextTag := fmt.Sprintf("v%s.%d.%s", m[1], next+1, m[3])
+	nextVersion := fmt.Sprintf("%s.%d.%s", m[1], next+1, m[3])
 	if rc {
-		nextTag += "-rc.0"
+		nextVersion += "-rc.0"
 	}
 
 	commit, _, err := ghc.Repositories.GetCommit(ctx, org, repoName, lastTag)
@@ -261,7 +261,7 @@ func run(org string, repoName string, lastTag string, rc bool, ghToken string) e
 	sort.Stable(prs)
 	sort.Stable(skipped)
 	return tmpl.Execute(os.Stdout, &changelogData{
-		Version:      nextTag,
+		Version:      nextVersion,
 		Date:         time.Now().Format("2006-01-02"),
 		PullRequests: prs,
 		Skipped:      skipped,
