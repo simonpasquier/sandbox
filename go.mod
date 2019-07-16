@@ -10,7 +10,7 @@ require (
 	github.com/oklog/ulid v1.3.1
 	github.com/pkg/errors v0.8.1
 	github.com/prometheus/client_golang v1.0.0
-	github.com/prometheus/common v0.4.1
+	github.com/prometheus/common v0.6.0
 	github.com/prometheus/prometheus v2.11.1+incompatible
 	golang.org/x/oauth2 v0.0.0-20190611165333-0f29369cfe45
 	google.golang.org/grpc v1.22.0
