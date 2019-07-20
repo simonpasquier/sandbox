@@ -3,7 +3,7 @@ module github.com/simonpasquier/sandbox
 go 1.12
 
 require (
-	github.com/google/go-github v17.0.0+incompatible
+	github.com/google/go-github v27.0.1+incompatible
 	github.com/google/go-github/v26 v26.0.6
 	github.com/grpc-ecosystem/grpc-gateway v1.9.4 // indirect
 	github.com/jszwedko/go-circleci v0.2.0
