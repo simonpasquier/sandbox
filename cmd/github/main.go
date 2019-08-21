@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v27/github"
 	"github.com/jszwedko/go-circleci"
 	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
@@ -137,29 +137,7 @@ func run(org string, ghToken string, ccToken string) error {
 
 		fmt.Println("External integrations:")
 		for _, h := range hooks {
-			fmt.Println("• ID:", h.GetID())
-			var (
-				name    string
-				isValid bool
-			)
-			if h.GetName() == "web" {
-				if u, ok := h.Config["url"]; ok {
-					s, ok := u.(string)
-					if ok {
-						name = s + " (generic webhook)"
-						isValid = true
-
-					} else {
-						name = "/!\\ URL field isn't a string"
-					}
-				} else {
-					name = "/!\\ No URL in configuration"
-				}
-			} else {
-				name = h.GetName() + " (GitHub service)"
-				isValid = true
-			}
-			checkMark(name, isValid)
+			fmt.Println("• ID:", h.GetID(), "URL:", h.GetURL())
 			checkMark("active", h.GetActive())
 			checkMark(fmt.Sprintf("events: %s", strings.Join(h.Events, ",")), true)
 		}

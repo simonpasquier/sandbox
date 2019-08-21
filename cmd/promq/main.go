@@ -113,7 +113,7 @@ func main() {
 	api := v1.NewAPI(client)
 	ctx := context.Background()
 
-	res, err := api.QueryRange(ctx, metric, v1.Range{Start: tstart, End: tend, Step: dstep})
+	res, _, err := api.QueryRange(ctx, metric, v1.Range{Start: tstart, End: tend, Step: dstep})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", metric, ":", err)
 		os.Exit(1)
@@ -122,7 +122,7 @@ func main() {
 	display(os.Stdout, res)
 
 	q := fmt.Sprintf("%s[%s]", metric, drange)
-	res, err = api.Query(ctx, q, tend)
+	res, _, err = api.Query(ctx, q, tend)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", q, ":", err)
 		os.Exit(1)
@@ -131,7 +131,7 @@ func main() {
 	display(os.Stdout, res)
 
 	q = fmt.Sprintf("rate(%s[%s])", metric, drange)
-	res, err = api.Query(ctx, q, tend)
+	res, _, err = api.Query(ctx, q, tend)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", q, ":", err)
 		os.Exit(1)
@@ -139,7 +139,7 @@ func main() {
 	fmt.Fprintf(os.Stdout, "Getting %s at instant %s\n", q, tend)
 	display(os.Stdout, res)
 
-	res, err = api.QueryRange(ctx, q, v1.Range{Start: tstart, End: tend, Step: dstep})
+	res, _, err = api.QueryRange(ctx, q, v1.Range{Start: tstart, End: tend, Step: dstep})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error querying Prometheus", metric, ":", err)
 		os.Exit(1)
