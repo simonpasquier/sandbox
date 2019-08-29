@@ -5,7 +5,7 @@ go 1.12
 require (
 	github.com/google/go-github/v27 v27.0.6
 	github.com/grpc-ecosystem/grpc-gateway v1.9.5 // indirect
-	github.com/jszwedko/go-circleci v0.2.0
+	github.com/jszwedko/go-circleci v0.3.0
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/oklog/ulid v1.3.1
