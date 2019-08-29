@@ -3,7 +3,6 @@ module github.com/simonpasquier/sandbox
 go 1.12
 
 require (
-	github.com/google/go-github/v26 v26.0.6
 	github.com/google/go-github/v27 v27.0.6
 	github.com/grpc-ecosystem/grpc-gateway v1.9.5 // indirect
 	github.com/jszwedko/go-circleci v0.2.0
@@ -15,6 +14,7 @@ require (
 	github.com/prometheus/common v0.6.0
 	github.com/prometheus/prometheus v2.11.1+incompatible
 	golang.org/x/oauth2 v0.0.0-20190611165333-0f29369cfe45
+	golang.org/x/text v0.3.2 // indirect
 	google.golang.org/grpc v1.23.0
 	gopkg.in/yaml.v2 v2.2.2
 )

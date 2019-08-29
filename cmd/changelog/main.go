@@ -15,7 +15,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/google/go-github/v26/github"
+	"github.com/google/go-github/v27/github"
 	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
 )
@@ -85,10 +85,10 @@ type changelogData struct {
 
 const changelogTmpl = `## {{ .Version }} / {{ .Date }}
 {{ range .PullRequests }}
-* [{{ .Kind }}] {{ .Title }}. #{{ .Number }}
+* [{{ .Kind }}] {{ makeSentence .Title }} #{{ .Number }}
 {{- end }}
 <!-- Skipped pull requests:{{ range .Skipped }}
-* [{{ .Kind }}] {{ .Title }}. #{{ .Number }}
+* [{{ .Kind }}] {{ makeSentence .Title }} #{{ .Number }}
 {{- end }} -->
 `
 
@@ -253,7 +253,13 @@ func run(org string, repoName string, lastTag string, rc bool, ghToken string) e
 		return err
 	}
 
-	tmpl, err := template.New("changelog").Parse(changelogTmpl)
+	tmpl, err := template.New("changelog").Funcs(
+		template.FuncMap{
+			"makeSentence": func(s string) string {
+				s = strings.TrimRight(s, ".")
+				return s + "."
+			},
+		}).Parse(changelogTmpl)
 	if err != nil {
 		return errors.Wrap(err, "invalid template")
 	}
