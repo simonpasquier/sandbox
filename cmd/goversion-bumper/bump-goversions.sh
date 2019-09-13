@@ -18,6 +18,9 @@ topdir="${PWD}"
 github_user="${GITHUB_USER:-simonpasquier}"
 branch="bump-golang-${GO_VERSION}"
 
+rm -f open-prs.sh
+touch open-prs.sh
+
 # Iterate over all repositories. The GitHub API can return 100 items at most
 # but it should be enough for us as there are less than 40 repositories
 # currently.
@@ -40,12 +43,15 @@ for repo in $(curl --netrc --retry 5 --silent https://api.github.com/users/prome
 
     if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
         git checkout -b "${branch}"
+        make unused
         git commit . -s -m "*: bump Go version to ${GO_VERSION}"
         if git push fork "${branch}"; then
+          cat >> ../open-prs.sh <<EOF
             curl --netrc --show-error --silent \
                 -X POST \
                 -d "{\"title\":\"Bump Go version to ${GO_VERSION}\",\"base\":\"master\",\"head\":\"${github_user}:${branch}\",\"body\":\"\"}" \
                 "https://api.github.com/repos/prometheus/${repo}/pulls"
+EOF
         fi
     fi
 done
