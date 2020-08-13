@@ -6,7 +6,7 @@ require (
 	github.com/google/go-github/v27 v27.0.6
 	github.com/jszwedko/go-circleci v0.2.0
 	github.com/oklog/ulid v1.3.1
-	github.com/pkg/errors v0.8.1
+	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.4.1
 	github.com/prometheus/common v0.9.1
 	github.com/prometheus/prometheus v1.8.2-0.20200213233353-b90be6f32a33
