@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/google/go-github/v27 v27.0.6
-	github.com/jszwedko/go-circleci v0.2.0
+	github.com/jszwedko/go-circleci v0.3.0
 	github.com/oklog/ulid v1.3.1
 	github.com/pkg/errors v0.8.1
 	github.com/prometheus/client_golang v1.4.1
